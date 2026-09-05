@@ -12,12 +12,17 @@ window can still surface by keyword match — it just gets no semantic score.
 
 ``MAX_CANDIDATES`` bounds how many structured-filter matches are pulled
 into Python for lexical/semantic scoring (most recent first), so a broad
-or unfiltered question still returns in well under a second.
+question still returns in well under a second. A fully unfiltered
+question is a special case: it falls back to the vector index's own
+``scope_cutoff_date`` (from its metadata, written by ``decp.cli``'s
+`index` command) as a ``date_min`` filter, so it still considers the whole
+indexed corpus rather than just whatever the full table's plain recency
+LIMIT happens to reach.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -112,9 +117,24 @@ def search(
     top_k: int = TOP_K,
 ) -> list[SearchResult]:
     filters = extract_filters(question)
+    limit = MAX_CANDIDATES
+    if filters == Filters():
+        # Nothing to narrow by: the full table's recency LIMIT was found to
+        # only reach back ~15 days, well short of the indexed window's 60,
+        # silently hiding most of the indexed corpus from an unfiltered
+        # question. Reuse the index's own cutoff date as a date_min filter
+        # instead — a single indexed comparison, unlike passing the
+        # indexed uids themselves as a query parameter, which DuckDB was
+        # measured to take 20+ seconds over at this corpus's size (see
+        # README.md, "Indexed corpus scope", for both measurements).
+        cutoff = vector_index.metadata.get("scope_cutoff_date")
+        if cutoff is not None:
+            filters = replace(filters, date_min=date.fromisoformat(cutoff))
+            limit = max(MAX_CANDIDATES, len(vector_index.ids))
+
     con = duckdb.connect(str(database_path), read_only=True)
     try:
-        candidates = fetch_candidates(con, filters)
+        candidates = fetch_candidates(con, filters, limit=limit)
     finally:
         con.close()
 
@@ -150,3 +170,21 @@ def search(
         scores = dict.fromkeys(ranked_ids, 0.0)
 
     return [SearchResult(score=scores[uid], **candidates[uid]) for uid in ranked_ids]
+
+
+def semantic_search(
+    question: str,
+    *,
+    vector_index: VectorIndex,
+    encoder: Encoder,
+    top_k: int = TOP_K,
+) -> list[str]:
+    """Pure vector-similarity baseline: no structured filters, no lexical
+    scoring, ranked over the whole indexed corpus. Not used by the API —
+    it exists to measure what hybrid search buys over a naive
+    embedding-only search (SPEC.md lot 4's semantic-vs-hybrid comparison,
+    and the architecture rationale in section 2: montant/département are
+    exact filters that embedding similarity alone cannot enforce).
+    """
+    query_vector = encoder([question])[0]
+    return [uid for uid, _ in vector_index.search(query_vector, top_k=top_k)]
