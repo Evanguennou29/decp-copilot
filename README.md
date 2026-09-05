@@ -2,7 +2,7 @@
 
 Retrieval-augmented search over French public procurement awards (DECP), with measured retrieval quality.
 
-> **Status:** lot 2 (indexing and hybrid search) — generation, evaluation and the frontend land in the following lots. See `SPEC.md` for the full plan.
+> **Status:** lot 3 (API and generation) — evaluation and the frontend land in the following lots. See `SPEC.md` for the full plan.
 
 ## Planned contents
 
@@ -85,6 +85,52 @@ Real run, reproducible with `python -m decp index` (or `make index`), on 2026-09
 | Vector index size on disk | `data/index/decp.index.npz` |
 | End-to-end search latency (query encode + structured filter + BM25 + semantic + fusion) | 168–389 ms per query, measured over several real questions |
 
+## API and generation (lot 3)
+
+`src/decp/api/app.py` exposes two endpoints over the hybrid search from
+lot 2: `GET /search` (raw ranked markets) and `GET /answer` (search plus,
+when available, a cited natural-language answer). `GET /health` reports
+whether generation is available.
+
+**The no-key mode is the default, not a fallback bolted on afterwards**
+(SPEC.md section 1: "un mode nominal documenté, pas une panne"). With an
+empty `.env`, `/answer` returns the matching markets and their statistics
+(count, montant total/min/max/moyen/médian) computed by
+`src/decp/answer/degraded.py` — no LLM call, no API key, nothing to
+configure. This is exactly what a recruiter cloning the repo without
+touching `.env` will see.
+
+When a generator *is* available (see below), `/answer` instead returns a
+drafted answer — but only if it cites at least one market's `uid`.
+`decp.answer.generate.generate_answer` builds the prompt (which explicitly
+demands `[uid: ...]` citations for every figure), calls the model, and
+raises `UncitedAnswerError` if no known `uid` appears in the response; the
+API catches that and **falls back to the degraded answer** rather than
+show an answer with unverifiable figures (SPEC.md section 7). This is
+checked directly: `tests/test_generate.py` feeds a fake generator an
+uncited response and asserts the error is raised, and
+`tests/test_app.py::test_answer_endpoint_falls_back_to_degraded_when_uncited`
+checks the same thing through the actual HTTP endpoint.
+
+Generation resolution, in order (`decp.answer.generate.load_generator`):
+1. an `OPENAI_API_KEY` — sent to `OPENAI_BASE_URL` (default `api.openai.com`,
+   but any OpenAI-compatible chat completions endpoint works, e.g. Groq's
+   free tier — see `.env.example`);
+2. otherwise, a locally reachable Ollama server (`OLLAMA_BASE_URL`, default
+   `localhost:11434`) — free, no key, but needs Ollama installed and running;
+3. otherwise, the degraded mode above.
+
+**Explicit verification, with a genuinely empty `.env`** (2026-09-05), against
+the real lot 1/2 data — both generation branches actually exercised, not just unit-tested:
+
+| Scenario | `GET /health` | `GET /answer` |
+|---|---|---|
+| Empty `.env`, no Ollama reachable (`OLLAMA_BASE_URL` pointed at a closed port) | `generation_available: false` | `mode: "degraded"`, real markets + stats, `answer: null` |
+| Empty `.env`, a local Ollama server reachable (this machine has one) | `generation_available: true` | `mode: "generated"`, a real `llama3.2` answer citing `[uid: ...]`, validated by `generate_answer` |
+
+Both started and answered correctly with `python -m decp serve` and no
+`OPENAI_API_KEY` set anywhere — the lot 3 criterion.
+
 ## Development
 
 ```bash
@@ -93,9 +139,11 @@ make lint      # ruff check .
 make test      # pytest
 make ingest    # python -m decp ingest — downloads and normalizes the DECP dataset
 make index     # python -m decp index — encodes the recent-window corpus and builds the vector index
+make serve     # python -m decp serve — runs the API on http://0.0.0.0:8000
 ```
 
-No API key is required to install, lint, test, or ingest data for this project.
+No API key is required to install, lint, test, ingest data, build the
+index, or serve the API — see "API and generation" above.
 
 ## Licence
 
