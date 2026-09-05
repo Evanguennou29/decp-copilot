@@ -190,7 +190,10 @@ def extract_filters(question: str) -> Filters:
 
     normalized = _normalize(question)
     departement_code = None
-    for name, code in DEPARTMENTS.items():
+    # Longest name first: "maine-et-loire" must win over "loire", which is
+    # itself a hyphen-bounded (so \b-matching) substring of it — same trap
+    # for "savoie"/"haute-savoie" and "marne"/"seine-et-marne".
+    for name, code in sorted(DEPARTMENTS.items(), key=lambda item: -len(item[0])):
         if re.search(rf"\b{re.escape(name)}\b", normalized):
             departement_code = code
             break

@@ -26,6 +26,17 @@ def test_departement_with_hyphen_and_apostrophe():
     assert filters.departement_code == "35"
 
 
+def test_departement_prefers_longest_compound_match():
+    """A compound name must win over a shorter one it happens to contain
+    (e.g. "loire" is a hyphen-bounded substring of "maine-et-loire")."""
+    assert extract_filters("un marché en Maine-et-Loire").departement_code == "49"
+    assert extract_filters("un marché dans la Loire").departement_code == "42"
+    assert extract_filters("un marché en Haute-Savoie").departement_code == "74"
+    assert extract_filters("un marché en Savoie").departement_code == "73"
+    assert extract_filters("un marché en Seine-et-Marne").departement_code == "77"
+    assert extract_filters("un marché dans la Marne").departement_code == "51"
+
+
 def test_year_since():
     filters = extract_filters("des marchés depuis 2025")
     assert filters.date_min == date(2025, 1, 1)
