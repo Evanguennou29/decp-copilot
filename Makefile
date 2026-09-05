@@ -1,4 +1,4 @@
-.PHONY: install lint format test run docker-build docker-up eval
+.PHONY: install lint format test run ingest index docker-build docker-up eval
 
 install:
 	pip install -e ".[dev]"
@@ -14,6 +14,12 @@ test:
 
 run:
 	python -m decp
+
+ingest:
+	python -m decp ingest
+
+index:
+	python -m decp index
 
 eval:
 	python eval/run.py

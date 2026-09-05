@@ -1,19 +1,24 @@
 """Command-line entry point for decp-copilot.
 
 Subcommands are wired up here as each lot lands (see SPEC.md section 6);
-"index" and "serve" only describe what is coming so far.
+"serve" only describes what is coming so far.
 """
 
 from __future__ import annotations
 
 import argparse
+import time
+from datetime import timedelta
+
+import duckdb
 
 from decp.config import load_settings
+from decp.index.embed import INDEX_SCOPE_WINDOW_DAYS, embed_texts, load_encoder
+from decp.index.store import save_index
 from decp.ingest.download import download_parquet
 from decp.ingest.normalize import normalize_to_duckdb
 
 _PLANNED_COMMANDS = {
-    "index": "Build the hybrid search index (lot 2).",
     "serve": "Run the FastAPI application (lot 3).",
 }
 
@@ -40,6 +45,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--skip-download",
         action="store_true",
         help="Reuse the parquet file already on disk instead of downloading it again.",
+    )
+
+    subparsers.add_parser(
+        "index", help="Encode the recent-window corpus and build the vector index (lot 2)."
     )
 
     for name, help_text in _PLANNED_COMMANDS.items():
@@ -71,6 +80,50 @@ def _run_ingest(skip_download: bool) -> int:
     return 0
 
 
+def _run_index() -> int:
+    settings = load_settings()
+
+    con = duckdb.connect(str(settings.database_path), read_only=True)
+    try:
+        cutoff = con.execute(
+            "SELECT max(dateNotification) FROM marches"
+        ).fetchone()[0] - timedelta(days=INDEX_SCOPE_WINDOW_DAYS)
+        rows = con.execute(
+            "SELECT uid, objet FROM marches WHERE dateNotification >= ?", [cutoff]
+        ).fetchall()
+    finally:
+        con.close()
+
+    ids = [row[0] for row in rows]
+    texts = [row[1] or "" for row in rows]
+    print(
+        f"Encoding {len(ids):,} markets notified since {cutoff} "
+        f"(last {INDEX_SCOPE_WINDOW_DAYS} days)..."
+    )
+
+    encoder = load_encoder()
+    start = time.perf_counter()
+    vectors = embed_texts(texts, encoder)
+    elapsed = time.perf_counter() - start
+
+    save_index(
+        settings.vector_index_path,
+        ids,
+        vectors,
+        metadata={
+            "scope_cutoff_date": cutoff.isoformat(),
+            "scope_window_days": INDEX_SCOPE_WINDOW_DAYS,
+            "row_count": len(ids),
+            "elapsed_seconds": elapsed,
+        },
+    )
+    print(
+        f"Indexed {len(ids):,} markets in {elapsed:.1f}s "
+        f"-> {settings.vector_index_path}"
+    )
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -79,6 +132,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "ingest":
         return _run_ingest(skip_download=args.skip_download)
+    if args.command == "index":
+        return _run_index()
     print(f"'{args.command}' is not implemented yet — see SPEC.md for the corresponding lot.")
     return 0
 

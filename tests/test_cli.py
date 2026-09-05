@@ -1,6 +1,13 @@
+from pathlib import Path
+
+import numpy as np
+
 import decp.cli as cli_module
+from decp.index.store import load_index
 from decp.ingest.download import DownloadResult
-from decp.ingest.normalize import NormalizeResult
+from decp.ingest.normalize import NormalizeResult, normalize_to_duckdb
+
+FIXTURE_PATH = Path(__file__).parent / "fixtures" / "decp_sample.parquet"
 
 
 def test_parser_accepts_all_subcommands():
@@ -18,7 +25,7 @@ def test_main_with_no_args_prints_help(capsys):
 
 
 def test_main_with_planned_command_reports_not_implemented(capsys):
-    exit_code = cli_module.main(["index"])
+    exit_code = cli_module.main(["serve"])
     captured = capsys.readouterr()
     assert exit_code == 0
     assert "not implemented" in captured.out
@@ -71,3 +78,27 @@ def test_ingest_skip_download_never_calls_download(monkeypatch, tmp_path):
     exit_code = cli_module.main(["ingest", "--skip-download"])
 
     assert exit_code == 0
+
+
+def _fake_encoder(texts):
+    dim = 8
+    vectors = np.zeros((len(texts), dim), dtype=np.float32)
+    for i, text in enumerate(texts):
+        vectors[i, len(text) % dim] = 1.0
+    return vectors
+
+
+def test_index_builds_vector_index_without_network(monkeypatch, tmp_path):
+    monkeypatch.setenv("DECP_DATA_DIR", str(tmp_path))
+    database_path = tmp_path / "decp.duckdb"
+    normalize_to_duckdb(FIXTURE_PATH, database_path)
+
+    monkeypatch.setattr(cli_module, "load_encoder", lambda *args, **kwargs: _fake_encoder)
+
+    exit_code = cli_module.main(["index"])
+
+    assert exit_code == 0
+    index = load_index(tmp_path / "index" / "decp.index.npz")
+    assert len(index) >= 1
+    assert index.vectors.shape[1] == 8
+    assert index.metadata["scope_window_days"] == 60

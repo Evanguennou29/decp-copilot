@@ -33,6 +33,10 @@ class Settings:
     def database_path(self) -> Path:
         return Path(self.data_dir) / "decp.duckdb"
 
+    @property
+    def vector_index_path(self) -> Path:
+        return Path(self.data_dir) / "index" / "decp.index.npz"
+
 
 def load_settings() -> Settings:
     """Read settings from the environment, defaulting to the no-key mode."""
