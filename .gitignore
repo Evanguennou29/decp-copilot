@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+.venv/
+venv/
+.ruff_cache/
+.pytest_cache/
+.mypy_cache/
+dist/
+build/
+
+# Environment
+.env
+
+# Data and generated indexes (see src/decp/config.py)
+data/
+*.duckdb
+
+# Frontend (lot 5)
+web/node_modules/
+web/dist/
+
+# OS
+.DS_Store
