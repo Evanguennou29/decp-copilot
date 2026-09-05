@@ -86,8 +86,12 @@ def _run_index() -> int:
         cutoff = con.execute(
             "SELECT max(dateNotification) FROM marches"
         ).fetchone()[0] - timedelta(days=INDEX_SCOPE_WINDOW_DAYS)
+        # DISTINCT: a market with several co-contractors spans several rows
+        # sharing the same uid and objet (see decp.ingest.normalize); embedding
+        # it once per co-contractor would only bloat the index with duplicate
+        # vectors of the same text.
         rows = con.execute(
-            "SELECT uid, objet FROM marches WHERE dateNotification >= ?", [cutoff]
+            "SELECT DISTINCT uid, objet FROM marches WHERE dateNotification >= ?", [cutoff]
         ).fetchall()
     finally:
         con.close()
