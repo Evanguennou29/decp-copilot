@@ -23,3 +23,6 @@ jobs:
 
       - name: Test
         run: pytest
+
+      - name: Build a tiny index from fixtures (smoke test)
+        run: python scripts/ci_smoke_index.py
