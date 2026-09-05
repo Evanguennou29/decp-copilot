@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
 authors = [{ name = "Evan Guennou", email = "evan.guennou2@gmail.com" }]
-dependencies = []
+dependencies = ["duckdb>=1.0,<2.0"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8.3", "ruff>=0.6"]
