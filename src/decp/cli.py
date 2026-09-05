@@ -1,8 +1,4 @@
-"""Command-line entry point for decp-copilot.
-
-Subcommands are wired up here as each lot lands (see SPEC.md section 6);
-"serve" only describes what is coming so far.
-"""
+"""Command-line entry point for decp-copilot."""
 
 from __future__ import annotations
 
@@ -11,16 +7,15 @@ import time
 from datetime import timedelta
 
 import duckdb
+import uvicorn
+from dotenv import load_dotenv
 
+from decp.api.app import create_app, load_real_dependencies
 from decp.config import load_settings
 from decp.index.embed import INDEX_SCOPE_WINDOW_DAYS, embed_texts, load_encoder
 from decp.index.store import save_index
 from decp.ingest.download import download_parquet
 from decp.ingest.normalize import normalize_to_duckdb
-
-_PLANNED_COMMANDS = {
-    "serve": "Run the FastAPI application (lot 3).",
-}
 
 
 def _format_bytes(num_bytes: int) -> str:
@@ -51,8 +46,11 @@ def build_parser() -> argparse.ArgumentParser:
         "index", help="Encode the recent-window corpus and build the vector index (lot 2)."
     )
 
-    for name, help_text in _PLANNED_COMMANDS.items():
-        subparsers.add_parser(name, help=help_text)
+    serve_parser = subparsers.add_parser(
+        "serve", help="Run the FastAPI application (lot 3)."
+    )
+    serve_parser.add_argument("--host", default="0.0.0.0")
+    serve_parser.add_argument("--port", type=int, default=8000)
 
     return parser
 
@@ -124,7 +122,15 @@ def _run_index() -> int:
     return 0
 
 
+def _run_serve(host: str, port: int) -> int:
+    deps = load_real_dependencies()
+    app = create_app(deps)
+    uvicorn.run(app, host=host, port=port)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
+    load_dotenv()  # no-op if there is no .env file, or it is empty
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.command is None:
@@ -134,8 +140,9 @@ def main(argv: list[str] | None = None) -> int:
         return _run_ingest(skip_download=args.skip_download)
     if args.command == "index":
         return _run_index()
-    print(f"'{args.command}' is not implemented yet — see SPEC.md for the corresponding lot.")
-    return 0
+    if args.command == "serve":
+        return _run_serve(host=args.host, port=args.port)
+    raise AssertionError(f"unhandled command: {args.command}")
 
 
 if __name__ == "__main__":

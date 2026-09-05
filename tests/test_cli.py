@@ -24,13 +24,6 @@ def test_main_with_no_args_prints_help(capsys):
     assert "usage" in captured.out.lower()
 
 
-def test_main_with_planned_command_reports_not_implemented(capsys):
-    exit_code = cli_module.main(["serve"])
-    captured = capsys.readouterr()
-    assert exit_code == 0
-    assert "not implemented" in captured.out
-
-
 def test_ingest_downloads_then_normalizes(monkeypatch, tmp_path, capsys):
     monkeypatch.setenv("DECP_DATA_DIR", str(tmp_path))
 
@@ -102,3 +95,45 @@ def test_index_builds_vector_index_without_network(monkeypatch, tmp_path):
     assert len(index) >= 1
     assert index.vectors.shape[1] == 8
     assert index.metadata["scope_window_days"] == 60
+
+
+def test_serve_wires_the_app_and_calls_uvicorn_run(monkeypatch):
+    sentinel_deps = object()
+    sentinel_app = object()
+    calls = {}
+
+    def fake_create_app(deps):
+        assert deps is sentinel_deps
+        return sentinel_app
+
+    monkeypatch.setattr(cli_module, "load_real_dependencies", lambda: sentinel_deps)
+    monkeypatch.setattr(cli_module, "create_app", fake_create_app)
+
+    def fake_run(app, host, port):
+        calls["app"] = app
+        calls["host"] = host
+        calls["port"] = port
+
+    monkeypatch.setattr(cli_module.uvicorn, "run", fake_run)
+
+    exit_code = cli_module.main(["serve"])
+
+    assert exit_code == 0
+    assert calls == {"app": sentinel_app, "host": "0.0.0.0", "port": 8000}
+
+
+def test_serve_accepts_custom_host_and_port(monkeypatch):
+    monkeypatch.setattr(cli_module, "load_real_dependencies", lambda: object())
+    monkeypatch.setattr(cli_module, "create_app", lambda deps: object())
+    calls = {}
+
+    def fake_run(app, host, port):
+        calls["host"] = host
+        calls["port"] = port
+
+    monkeypatch.setattr(cli_module.uvicorn, "run", fake_run)
+
+    exit_code = cli_module.main(["serve", "--host", "127.0.0.1", "--port", "9000"])
+
+    assert exit_code == 0
+    assert calls == {"host": "127.0.0.1", "port": 9000}
