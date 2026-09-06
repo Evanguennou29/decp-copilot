@@ -1,4 +1,4 @@
-.PHONY: install lint format test run ingest index serve docker-build docker-up eval
+.PHONY: install lint format test run ingest index serve mcp docker-build docker-up eval
 
 install:
 	pip install -e ".[dev]"
@@ -23,6 +23,9 @@ index:
 
 serve:
 	python -m decp serve
+
+mcp:
+	python mcp/server.py
 
 eval:
 	python eval/run.py

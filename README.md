@@ -4,7 +4,7 @@ Retrieval-augmented search over French public procurement awards (DECP), with me
 
 **Live demo:** <https://decp-copilot.vercel.app> — no sign-up, no API key needed.
 
-> **Status:** lot 5 (frontend) — the repo is publishable and pinnable at this point. See `SPEC.md` for the full plan.
+> **Status:** lot 6 (MCP server, bonus) — one lot of finishing polish left. See `SPEC.md` for the full plan.
 
 ## Evaluation results
 
@@ -251,6 +251,22 @@ mode is a browser-level setting this session cannot toggle on the user's
 behalf — a quick manual check in an actual private window is the last
 step before calling this fully verified.
 
+## MCP server (lot 6, bonus)
+
+`mcp/server.py` exposes the same hybrid search and market lookup as two
+[MCP](https://modelcontextprotocol.io) tools, over stdio, for any MCP
+client (Claude Desktop, Claude Code...): `search_marches_tool` (montant,
+département, type, date, and/or free text — same query language as the
+web UI) and `get_marche_tool` (full details for one market by its `uid`).
+Both reuse `decp.api.app`'s `Dependencies`/`load_real_dependencies()` —
+same database, model, and vector index as the HTTP API, no separate
+loading logic.
+
+Run it with `make mcp` (needs `python -m decp ingest` and `python -m decp
+index` first, like `decp serve`); see `mcp/README.md` for the full tool
+reference and how to point a client (e.g. Claude Desktop's
+`claude_desktop_config.json`) at it.
+
 ## Development
 
 ```bash
@@ -260,6 +276,7 @@ make test      # pytest
 make ingest    # python -m decp ingest — downloads and normalizes the DECP dataset
 make index     # python -m decp index — encodes the recent-window corpus and builds the vector index
 make serve     # python -m decp serve — runs the API on http://0.0.0.0:8000
+make mcp       # python mcp/server.py — runs the MCP server over stdio
 ```
 
 No API key is required to install, lint, test, ingest data, build the
