@@ -15,6 +15,7 @@ Retrieval-augmented search over French public procurement awards (DECP), with me
 | **hybrid** (shipped) | 45 | **0.60** | **0.41** | 372.5 | 959.1 |
 | semantic-only (baseline) | 45 | 0.18 | 0.11 | 68.2 | 80.0 |
 
+
 By question category — this is the number that justifies hybrid over semantic-only (SPEC.md section 2):
 
 | Category | hybrid recall@10 | semantic-only recall@10 |
