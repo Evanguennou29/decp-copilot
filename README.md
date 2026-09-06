@@ -2,6 +2,8 @@
 
 Retrieval-augmented search over French public procurement awards (DECP), with measured retrieval quality.
 
+**Live demo:** <https://decp-copilot.vercel.app> — no sign-up, no API key needed.
+
 > **Status:** lot 5 (frontend) — the repo is publishable and pinnable at this point. See `SPEC.md` for the full plan.
 
 ## Evaluation results
@@ -197,37 +199,57 @@ Two more bugs were found this way, on top of the two from lot 4:
 
 ## Deployment
 
+**Live demo:** <https://decp-copilot.vercel.app> (frontend) — calls the
+API at <https://decp-copilot.fly.dev>. Deployed with an empty `.env` /
+no `OPENAI_API_KEY`: what loads by default is the degraded mode (see
+"API and generation"). Verified end to end in a real browser (search,
+filters, stats, table all render against the live API), including a
+fresh, cookie-free tab — see the note on private-browsing verification
+below.
+
 Two independent, free-tier deployments, wired together by one environment
 variable:
 
-**API — Hugging Face Spaces (Docker SDK)**
-1. Create a new Space at huggingface.co, SDK = **Docker**, visibility
-   public. Note its git URL (`https://huggingface.co/spaces/<user>/<space>`).
-2. From this repo: `git remote add hf <that git URL>`, then
-   `git push hf main`. The root `Dockerfile` bakes the dataset and vector
-   index in at build time (`RUN python -m decp ingest && python -m decp
-   index`) — expect the first build to take **10–15 minutes**; it's real
-   work, not a hang.
-3. Optional: to enable drafted answers, add `OPENAI_API_KEY` (and, for a
-   non-OpenAI provider like Groq, `OPENAI_BASE_URL`/`OPENAI_MODEL`) as a
-   **Space secret**. Without it, the Space serves the degraded mode by
-   default — still fully useful (see "API and generation" above).
-4. Once running, note the Space's public URL
-   (`https://<user>-<space>.hf.space`).
+**API — Fly.io** (a Hugging Face Space was tried first; its Docker SDK
+build kept prompting for payment on this account, so Fly.io was used
+instead — its Dockerfile SDK worked on the free/hobby tier with no card
+required at the time of this deploy):
+1. `flyctl auth login`, then from the repo root: `flyctl launch
+   --no-deploy` — detects the root `Dockerfile`, asks for an app name and
+   region, and writes `fly.toml` (already committed here; internal port
+   7860, `min_machines_running = 0` so the machine sleeps when idle and
+   wakes on request — the free-tier sleep behaviour the frontend accounts
+   for).
+2. Optional: `flyctl secrets set OPENAI_API_KEY=...` (and
+   `OPENAI_BASE_URL`/`OPENAI_MODEL` for a non-OpenAI provider like Groq)
+   to enable drafted answers. Skipped on this deploy — degraded mode is
+   the default, and still fully useful.
+3. `flyctl deploy` — builds remotely on Fly's infrastructure (not your
+   machine), baking the dataset and vector index in at build time
+   (`RUN python -m decp ingest && python -m decp index`); expect **10–15
+   minutes**, it's real work, not a hang. Gives a `https://<app>.fly.dev`
+   URL.
 
 **Frontend — Vercel**
-1. Import this GitHub repo as a new Vercel project.
+1. Import this GitHub repo as a new Vercel project (sign up with GitHub
+   for automatic repo access).
 2. Set **Root Directory** to `web`. Vercel auto-detects Vite (build
    command `npm run build`, output directory `dist`).
 3. Add a project environment variable `VITE_API_BASE_URL` set to the
-   Space's URL from above (no trailing slash).
+   Fly.io URL from above (no trailing slash).
 4. Deploy. Vercel gives a `https://<project>.vercel.app` URL.
-
-**Live demo:** _added once deployed — see the top of this README._
 
 The frontend's `fetchAnswer` (`web/src/api.ts`) treats a slow first
 response as the API waking up from the free tier's sleep, not an error —
 see "Frontend" above.
+
+**On the lot 5 criterion ("fonctionne en navigation privée"):** verified
+from a fresh, cookie-free browser tab against the live URLs above, which
+covers everything the app's own state could break (it uses no cookies
+and only per-viewer, non-essential state, if any). True private-browsing
+mode is a browser-level setting this session cannot toggle on the user's
+behalf — a quick manual check in an actual private window is the last
+step before calling this fully verified.
 
 ## Development
 
