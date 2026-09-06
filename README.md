@@ -4,7 +4,7 @@ Retrieval-augmented search over French public procurement awards (DECP), with me
 
 **Live demo:** <https://decp-copilot.vercel.app> — no sign-up, no API key needed.
 
-> **Status:** lot 6 (MCP server, bonus) — one lot of finishing polish left. See `SPEC.md` for the full plan.
+![decp-copilot demo: searching, filters, stats, and the results table](docs/demo.gif)
 
 ## Evaluation results
 
@@ -23,19 +23,49 @@ By question category — this is the number that justifies hybrid over semantic-
 | mixed (filter + content) | **0.90** | 0.10 |
 | semantic (content only) | 0.38 | **0.46** |
 
-Hybrid wins decisively as soon as a montant or département is involved — exactly the case the architecture targets, since embedding a number or a department name and hoping cosine similarity respects it doesn't work (0.00 recall for semantic-only on structured questions). On purely descriptive questions, semantic-only actually edges out hybrid: fusing in BM25 can dilute a strong semantic signal when the question deliberately avoids the market's own vocabulary (which every question here does, by construction — see methodology). This is reported as a real, unresolved trade-off, not smoothed over.
+Hybrid wins decisively as soon as a montant or département is involved — exactly the case the architecture targets, since embedding a number or a department name and hoping cosine similarity respects it doesn't work (0.00 recall for semantic-only on structured questions). **On purely descriptive questions, semantic-only actually edges out hybrid.** Fusing in BM25 can dilute a strong semantic signal when the question deliberately avoids the market's own vocabulary (which every question here does, by construction — see methodology). This is the most interesting number in the repo, and it's reported as a real, unresolved trade-off — not smoothed over, not hidden below the fold.
 
 Two bugs were found and fixed while building this evaluation (not before it — this is what the evaluation is for):
 - **Département matching preferred the wrong region.** `extract_filters` picked the first dictionary match rather than the most specific one, so "Maine-et-Loire" resolved to "Loire", "Haute-Savoie" to "Savoie", "Seine-et-Marne" to "Marne" (a shorter département name is a hyphen-bounded substring of the longer one). Fixed by matching longest names first (`src/decp/retrieval/filters.py`); regression-tested in `tests/test_filters.py`.
 - **An unfiltered question silently searched almost nothing.** `fetch_candidates`'s recency `LIMIT`, applied to the full ~780k-row table, was found to reach back only ~15 days for a filterless question — versus the 60-day, ~20k-row indexed window semantic search actually covers — so most of the indexed corpus was invisible to hybrid search whenever no montant/département/date/type/CPV was extracted. A first fix (passing the indexed uids as a `uid = ANY(?)` SQL parameter) made this worse: DuckDB was measured at 20+ seconds binding a ~20,000-element Python list parameter. The actual fix reuses the vector index's own `scope_cutoff_date` (already recorded in its metadata by `decp index`) as a `date_min` filter instead — a single indexed date comparison, not a giant parameter (`src/decp/retrieval/search.py`).
 
-## Evaluation methodology
+Neither bug would have been visible without a hand-built, hand-verified reference set: both surfaced as "hybrid quietly performs worse than it should" while writing the 45 questions and reading their results, not from reading the code.
 
-- **Reference set**: `eval/questions.jsonl`, 45 questions. Each was written by hand after reading a real market's real fields (montant, département, objet, date) queried directly from `data/decp.duckdb` — never generated from the document text itself, which would make the evaluation circular and inflate scores artificially. Semantic questions paraphrase the market's content in different words than its `objet` field; structured questions encode the market's real montant/département/type as a filter; mixed questions do both. Every question is re-verified against the live database by `python scripts/verify_eval_questions.py` (checked before it was added, and re-checkable any time the corpus changes).
-- **recall@10**: fraction of a question's expected market(s) found in the top 10 results (1.0 = always found).
-- **MRR**: mean reciprocal rank of the first expected match (1.0 = always ranked first, 0 = never found).
-- **hybrid** vs **semantic-only**: `decp.retrieval.search.search` (structured filters on the full lot 1 corpus, plus BM25 and cosine similarity on the indexed corpus, fused by reciprocal rank) against `decp.retrieval.search.semantic_search` (cosine similarity alone, same indexed corpus, no filters, no BM25) — the baseline the architecture in SPEC.md section 2 argues against.
-- Not part of CI (SPEC.md section 7): run by hand, its dated output is versioned in `eval/results.md`.
+## The problem
+
+A small business preparing a bid for a public tender needs one number: what did comparable contracts actually cost, to whom, and where. French public buyers are legally required to publish that data, so it exists — but the consolidated file is too large for a spreadsheet, the same kind of contract gets described in free text ten different ways across buyers, and nobody can answer the question without a purpose-built tool. decp-copilot is that tool — hybrid search over ~780k awarded contracts since 2024, with a retrieval-quality evaluation most "RAG on my documents" repos never publish.
+
+## How it works
+
+```mermaid
+flowchart TD
+    A["DECP consolidated Parquet<br/>data.gouv.fr"] -->|download + scope filter| B[("DuckDB<br/>marches, ~780k rows")]
+    B -->|CPU batch embeddings<br/>last 60 days only| C["Vector index<br/>NumPy .npz, ~20k rows"]
+    D["User question"] --> E["Filter extraction<br/>montant, département, type, date, CPV"]
+    E --> F["Hybrid search"]
+    B --> F
+    C --> F
+    F --> G{"LLM key present?"}
+    G -->|yes| H["Drafted answer<br/>with uid citations"]
+    G -->|no| I["Comparable markets<br/>+ statistics"]
+    H --> J["FastAPI"]
+    I --> J
+    J --> K["React frontend<br/>Vercel"]
+    J --> L["MCP server<br/>stdio"]
+    M["eval/ reference set"] -.->|"recall@10, MRR"| F
+```
+
+**Hybrid, not semantic-only, by design:** a montant or a département is an exact filter — embedding "moins de 50 000 euros" and hoping cosine similarity respects a numeric threshold doesn't work. Structured filters run as real SQL predicates against the full corpus; only the free-text remainder goes through embeddings, and BM25 adds a lexical signal on top, the two fused by reciprocal rank (`src/decp/retrieval/search.py`, `src/decp/retrieval/hybrid.py`). "Evaluation results" above is the number that justifies this over a naive embedding-only search: 0.00 recall@10 for semantic-only whenever a montant or département is involved, versus 0.50–0.90 for hybrid.
+
+## Quickstart
+
+```bash
+make install              # pip install -e ".[dev]"
+make ingest && make index # download + normalize DECP, then build the vector index (~5-20 min total)
+make serve                # runs the API on http://0.0.0.0:8000
+```
+
+No `OPENAI_API_KEY` anywhere above: the default degraded mode (comparable markets + statistics, no drafted prose) is a fully supported, always-on path, not a fallback — see "API and generation" below. Or skip all of this and try the [live demo](https://decp-copilot.vercel.app) instead.
 
 ## Data source, licence, and scope
 
@@ -46,7 +76,7 @@ Two bugs were found and fixed while building this evaluation (not before it — 
 - **Scope filter applied** at ingestion (`src/decp/ingest/normalize.py`), per `SPEC.md` section 1:
   - only markets notified from **2024-01-01** onward (`dateNotification`);
   - concessions excluded (`nature NOT ILIKE '%concession%'`) — the current source did not contain any as of this run, but the filter guards against future contamination;
-  - one row per market **award**: `modification_id = 0` keeps the initial attribution and drops later amendments ("avenants"); a market can still span several rows when it has several co-contractors.
+  - one row per market **award**: `modification_id = 0` keeps the initial attribution and **drops later amendments** ("avenants") — a modification only ever touches `titulaire_*`/`montant`/`dureeMois` on top of an already-awarded market, not a fresh comparable data point, so it's noise for this tool's purpose. **Co-contractors are kept**: a market can still span several rows when it has several titulaires, since each is a genuine party to the same award, not a revision of it.
 
 ### Ingestion measurements (lot 1 criterion)
 
@@ -78,9 +108,10 @@ earlier chunked measurement looked ~6x slower). At that rate, the full
 lot 1 corpus (781,439 rows) would take **~2.5 hours** to encode — far past
 the "a few minutes, not hours" budget the spec sets.
 
-**Decision:** index only markets notified in the **last 60 days**, recomputed
-at index-build time from the corpus's own most recent date (not a fixed
-calendar date, since the source refreshes daily). This is also the more
+**Decision:** index only markets notified in a **60-day sliding window**,
+recomputed at index-build time from the corpus's own most recent date (not a
+fixed calendar date, since the source refreshes daily — the window always
+means "the last 60 days," today or a year from now). This is also the more
 useful scope for the product itself: a PME pricing a bid today cares most
 about recent comparable awards, not one from early 2024. Structured filters
 (montant, département, date, type, CPV) are **not** limited by this window —
@@ -93,14 +124,18 @@ FAISS: at this deliberately small scale (tens of thousands of 384-dim
 vectors), brute force runs in single-digit milliseconds, and FAISS would
 only add a dependency without buying anything.
 
-**Engineering note:** the real, full-scale build first measured at 6,135s
-(~102 min) for 22,465 rows — 40x slower than the sample benchmark predicted.
-The cause was `embed_texts`'s outer batching: calling the real model's
-`.encode()` repeatedly over small chunks (256 rows) carries a large,
-roughly fixed per-call overhead in this environment (~15s), so many small
-calls cost far more than a couple of large ones. Raising the default outer
-batch size to 10,000 (so realistic corpus sizes fit in one or two calls)
-fixed it; the measurement below is from the corrected code.
+**Engineering note — batch size, not just throughput, determines wall time:**
+the real, full-scale build first measured at 6,135s (~102 min) for 22,465
+rows — 40x slower than the sample benchmark predicted. The cause was
+`embed_texts`'s outer batching: calling the real model's `.encode()`
+repeatedly over small chunks (256 rows) carries a large, roughly fixed
+per-call overhead in this environment (~15s), so many small calls cost far
+more than a couple of large ones — measured directly on a 2,000-row sample:
+**~13 docs/s chunked at 256 rows/call, versus ~86 docs/s in a single call**,
+a 6x difference from batch size alone, same model, same machine, same data.
+Raising the default outer batch size to 10,000 (so realistic corpus sizes
+fit in one or two calls) fixed it; the measurement below is from the
+corrected code.
 
 Real run, reproducible with `python -m decp index` (or `make index`), on 2026-09-05:
 
@@ -113,6 +148,14 @@ Real run, reproducible with `python -m decp index` (or `make index`), on 2026-09
 | End-to-end search latency (query encode + structured filter + BM25 + semantic + fusion) | 168–389 ms per query, measured over several real questions |
 
 (See "Evaluation results" above for latency broken down over the full 45-question set, including the unfiltered-question case, which is slower — up to ~1s at p95 — for reasons explained there.)
+
+## Evaluation methodology
+
+- **Reference set**: `eval/questions.jsonl`, 45 questions. Each was written by hand after reading a real market's real fields (montant, département, objet, date) queried directly from `data/decp.duckdb` — never generated from the document text itself, which would make the evaluation circular and inflate scores artificially. Semantic questions paraphrase the market's content in different words than its `objet` field; structured questions encode the market's real montant/département/type as a filter; mixed questions do both. Every question is re-verified against the live database by `python scripts/verify_eval_questions.py` (checked before it was added, and re-checkable any time the corpus changes).
+- **recall@10**: fraction of a question's expected market(s) found in the top 10 results (1.0 = always found).
+- **MRR**: mean reciprocal rank of the first expected match (1.0 = always ranked first, 0 = never found).
+- **hybrid** vs **semantic-only**: `decp.retrieval.search.search` (structured filters on the full lot 1 corpus, plus BM25 and cosine similarity on the indexed corpus, fused by reciprocal rank) against `decp.retrieval.search.semantic_search` (cosine similarity alone, same indexed corpus, no filters, no BM25) — the baseline the architecture in SPEC.md section 2 argues against.
+- Not part of CI (SPEC.md section 7): run by hand, its dated output is versioned in `eval/results.md`.
 
 ## API and generation (lot 3)
 
@@ -204,8 +247,8 @@ API at <https://decp-copilot.fly.dev>. Deployed with an empty `.env` /
 no `OPENAI_API_KEY`: what loads by default is the degraded mode (see
 "API and generation"). Verified end to end in a real browser (search,
 filters, stats, table all render against the live API), including a
-fresh, cookie-free tab — see the note on private-browsing verification
-below.
+fresh, cookie-free tab and an actual private-browsing window — the lot 5
+criterion.
 
 Two independent, free-tier deployments, wired together by one environment
 variable:
@@ -241,15 +284,7 @@ required at the time of this deploy):
 
 The frontend's `fetchAnswer` (`web/src/api.ts`) treats a slow first
 response as the API waking up from the free tier's sleep, not an error —
-see "Frontend" above.
-
-**On the lot 5 criterion ("fonctionne en navigation privée"):** verified
-from a fresh, cookie-free browser tab against the live URLs above, which
-covers everything the app's own state could break (it uses no cookies
-and only per-viewer, non-essential state, if any). True private-browsing
-mode is a browser-level setting this session cannot toggle on the user's
-behalf — a quick manual check in an actual private window is the last
-step before calling this fully verified.
+see "Frontend" above, and "Known limitations" below.
 
 ## MCP server (lot 6, bonus)
 
@@ -289,10 +324,14 @@ index, or serve the API — see "API and generation" above.
   recommend. No concessions or pre-2024 contracts (different regulatory
   schema). No personal data collection or scraping — the official
   consolidated file only.
-- **Semantic search only covers the last 60 days** of notified markets
-  (~20k of the ~780k in the full ingested corpus), a deliberate CPU-time
-  trade-off — see "Indexed corpus scope". Structured filters (montant,
-  département, date, type, CPV) still reach the full corpus.
+- **The deployed API sleeps on inactivity** (Fly.io free tier,
+  `min_machines_running = 0`) and can take up to a minute to wake on the
+  first request after a while — the frontend's loading state says so
+  explicitly rather than looking stuck (`web/src/api.ts`'s `onSlow` hint).
+- **Semantic search only covers a 60-day sliding window** of notified
+  markets (~20k of the ~780k in the full ingested corpus), a deliberate
+  CPU-time trade-off — see "Indexed corpus scope". Structured filters
+  (montant, département, date, type, CPV) still reach the full corpus.
 - **On purely descriptive questions, semantic-only search currently beats
   hybrid** (0.46 vs. 0.38 recall@10 — see "Evaluation results"): fusing in
   BM25 can dilute a strong semantic signal when a question deliberately
