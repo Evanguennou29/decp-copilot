@@ -14,17 +14,22 @@ generator — see ``decp.answer.degraded``.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from fastapi import FastAPI, Query
+from fastapi.middleware.cors import CORSMiddleware
 
 from decp.answer.degraded import build_degraded_answer
 from decp.answer.generate import Generator, UncitedAnswerError, generate_answer, load_generator
 from decp.config import Settings, load_settings
 from decp.index.embed import Encoder, load_encoder
 from decp.index.store import VectorIndex, load_index
+from decp.retrieval.filters import extract_filters
 from decp.retrieval.search import SearchResult, search
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -65,6 +70,17 @@ def _market_dict(result: SearchResult) -> dict:
     return data
 
 
+def _filters_dict(question: str) -> dict:
+    """The structured filters parsed out of ``question`` — exposed to the
+    frontend so it can render them as chips (montant/département/date/type/
+    CPV), independently of whether a market was found for them."""
+    data = asdict(extract_filters(question))
+    for key in ("date_min", "date_max"):
+        if data.get(key) is not None:
+            data[key] = data[key].isoformat()
+    return data
+
+
 def create_app(deps: Dependencies) -> FastAPI:
     app = FastAPI(
         title="decp-copilot",
@@ -72,6 +88,14 @@ def create_app(deps: Dependencies) -> FastAPI:
             "Recherche hybride et synthèse citée sur les marchés publics "
             "français attribués (DECP)."
         ),
+    )
+
+    # Public, read-only, cookie-free demo API: any origin may call it.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_methods=["GET"],
+        allow_headers=["*"],
     )
 
     @app.get("/health")
@@ -87,7 +111,7 @@ def create_app(deps: Dependencies) -> FastAPI:
             encoder=deps.encoder,
             top_k=top_k,
         )
-        return {"results": [_market_dict(r) for r in results]}
+        return {"results": [_market_dict(r) for r in results], "filters": _filters_dict(q)}
 
     @app.get("/answer")
     def answer_endpoint(q: str = Query(..., min_length=1), top_k: int = 10) -> dict:
@@ -98,6 +122,11 @@ def create_app(deps: Dependencies) -> FastAPI:
             encoder=deps.encoder,
             top_k=top_k,
         )
+        # Stats accompany the answer either way — montants are the main
+        # information regardless of whether a generator drafted any prose.
+        degraded = build_degraded_answer(results)
+        stats = asdict(degraded.stats)
+        filters = _filters_dict(q)
 
         if deps.generator is not None:
             try:
@@ -106,16 +135,26 @@ def create_app(deps: Dependencies) -> FastAPI:
                     "mode": "generated",
                     "answer": answer_text,
                     "markets": [_market_dict(r) for r in results],
+                    "stats": stats,
+                    "filters": filters,
                 }
             except UncitedAnswerError:
                 pass  # never surface an uncited answer: fall through to degraded
+            except Exception:
+                # A generation backend hiccup (network timeout, connection
+                # refused, malformed response...) must not break the whole
+                # request: the degraded baseline below is always available
+                # and is the whole point of the no-key mode being a real,
+                # supported path rather than an afterthought. Logged, not
+                # silently swallowed, so operators can see it happening.
+                logger.exception("Generation failed; falling back to degraded mode")
 
-        degraded = build_degraded_answer(results)
         return {
             "mode": "degraded",
             "answer": None,
             "markets": [_market_dict(r) for r in degraded.markets],
-            "stats": asdict(degraded.stats),
+            "stats": stats,
+            "filters": filters,
         }
 
     return app

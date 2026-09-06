@@ -79,6 +79,20 @@ def test_search_endpoint_returns_matches(tmp_path, monkeypatch):
     assert body["results"][0]["uid"] == "12345678900011M001"
 
 
+def test_search_endpoint_returns_parsed_filters(tmp_path, monkeypatch):
+    deps = _build_deps(tmp_path, monkeypatch)
+    client = TestClient(create_app(deps))
+
+    response = client.get(
+        "/search", params={"q": "moins de 50000 euros dans le Finistère"}
+    )
+
+    assert response.status_code == 200
+    filters = response.json()["filters"]
+    assert filters["montant_max"] == 50000.0
+    assert filters["departement_code"] == "29"
+
+
 def test_search_endpoint_rejects_empty_question(tmp_path, monkeypatch):
     deps = _build_deps(tmp_path, monkeypatch)
     client = TestClient(create_app(deps))
@@ -133,6 +147,28 @@ def test_answer_endpoint_generated_with_citation(tmp_path, monkeypatch):
     assert body["mode"] == "generated"
     assert "12345678900011M001" in body["answer"]
     assert body["markets"]
+    assert body["stats"]["count"] >= 1
+    assert "filters" in body
+
+
+def test_answer_endpoint_falls_back_to_degraded_when_generator_raises(tmp_path, monkeypatch):
+    """A generation backend failure (network timeout, connection error...)
+    must not 500 the whole request — found by hand-testing the frontend
+    against a real, slow local Ollama call that timed out."""
+
+    def failing_generator(prompt):
+        raise TimeoutError("Ollama did not respond in time")
+
+    deps = _build_deps(tmp_path, monkeypatch, generator=failing_generator)
+    client = TestClient(create_app(deps))
+
+    response = client.get("/answer", params={"q": "nettoyage des locaux municipaux"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["mode"] == "degraded"
+    assert body["answer"] is None
+    assert body["stats"]["count"] >= 1
 
 
 def test_answer_endpoint_falls_back_to_degraded_when_uncited(tmp_path, monkeypatch):
