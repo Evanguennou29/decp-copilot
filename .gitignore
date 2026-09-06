@@ -21,6 +21,9 @@ data/
 # Frontend (lot 5)
 web/node_modules/
 web/dist/
+web/.env
+web/.env.local
+web/*.tsbuildinfo
 
 # OS
 .DS_Store

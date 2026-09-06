@@ -2,7 +2,7 @@
 
 Retrieval-augmented search over French public procurement awards (DECP), with measured retrieval quality.
 
-> **Status:** lot 4 (evaluation) — the frontend lands next. See `SPEC.md` for the full plan.
+> **Status:** lot 5 (frontend) — the repo is publishable and pinnable at this point. See `SPEC.md` for the full plan.
 
 ## Evaluation results
 
@@ -158,6 +158,77 @@ the real lot 1/2 data — both generation branches actually exercised, not just 
 Both started and answered correctly with `python -m decp serve` and no
 `OPENAI_API_KEY` set anywhere — the lot 3 criterion.
 
+## Frontend (lot 5)
+
+`web/` — React + Vite + TypeScript + Tailwind CSS v4, no component
+library: every element (table, chips, badges, skeleton) is styled
+directly with Tailwind utilities, per SPEC.md section 4. Full design
+rationale (typography, palette, density, the five states) is in
+`web/README.md`. In short:
+
+- **Typography**: one characterful family (Space Grotesk) across the
+  whole weight range — bold for montants and headings, light for
+  metadata — with `tabular-nums` on every figure so columns of amounts
+  align.
+- **Palette**: a warm tinted paper background, near-black ink, and
+  exactly two accents — a deep burgundy reserved *only* for montant
+  figures, a muted navy for everything interactive.
+- **Density**: results are rows in a real `<table>` (`table-fixed` +
+  `line-clamp-2`), not cards — comparison is the point.
+- **Five states, handled explicitly**: idle, loading (with a "waking up"
+  hint for a sleeping free-tier API), error with retry, no results, and
+  results — themselves split into degraded (the default: stats + table,
+  no LLM call) and generated (adds a cited paragraph). Verified by hand
+  in a real browser against the real API, not just by reading the code —
+  see the bugs below.
+
+Two more bugs were found this way, on top of the two from lot 4:
+- **A generation backend failure crashed the whole request.** A real,
+  slow local Ollama call exceeding its 60s timeout raised an unhandled
+  exception inside `/answer`, returning a 500 instead of the guaranteed
+  degraded baseline. Fixed by catching any generation failure (not just
+  `UncitedAnswerError`) and falling back to degraded, logged not
+  swallowed (`src/decp/api/app.py`); regression-tested with a generator
+  that raises `TimeoutError`.
+- **The Docker image never actually built.** `pyproject.toml` declares
+  `readme = "README.md"` (required by its build backend, hatchling), but
+  the Dockerfile only copied `pyproject.toml` and `src/` — a build nobody
+  had actually run before this lot. Fixed by copying `README.md` too.
+
+## Deployment
+
+Two independent, free-tier deployments, wired together by one environment
+variable:
+
+**API — Hugging Face Spaces (Docker SDK)**
+1. Create a new Space at huggingface.co, SDK = **Docker**, visibility
+   public. Note its git URL (`https://huggingface.co/spaces/<user>/<space>`).
+2. From this repo: `git remote add hf <that git URL>`, then
+   `git push hf main`. The root `Dockerfile` bakes the dataset and vector
+   index in at build time (`RUN python -m decp ingest && python -m decp
+   index`) — expect the first build to take **10–15 minutes**; it's real
+   work, not a hang.
+3. Optional: to enable drafted answers, add `OPENAI_API_KEY` (and, for a
+   non-OpenAI provider like Groq, `OPENAI_BASE_URL`/`OPENAI_MODEL`) as a
+   **Space secret**. Without it, the Space serves the degraded mode by
+   default — still fully useful (see "API and generation" above).
+4. Once running, note the Space's public URL
+   (`https://<user>-<space>.hf.space`).
+
+**Frontend — Vercel**
+1. Import this GitHub repo as a new Vercel project.
+2. Set **Root Directory** to `web`. Vercel auto-detects Vite (build
+   command `npm run build`, output directory `dist`).
+3. Add a project environment variable `VITE_API_BASE_URL` set to the
+   Space's URL from above (no trailing slash).
+4. Deploy. Vercel gives a `https://<project>.vercel.app` URL.
+
+**Live demo:** _added once deployed — see the top of this README._
+
+The frontend's `fetchAnswer` (`web/src/api.ts`) treats a slow first
+response as the API waking up from the free tier's sleep, not an error —
+see "Frontend" above.
+
 ## Development
 
 ```bash
@@ -171,6 +242,32 @@ make serve     # python -m decp serve — runs the API on http://0.0.0.0:8000
 
 No API key is required to install, lint, test, ingest data, build the
 index, or serve the API — see "API and generation" above.
+
+## Known limitations
+
+- **Out of scope by design** (SPEC.md section 1): no legal advice, no
+  price prediction — the tool restitutes and compares, it doesn't
+  recommend. No concessions or pre-2024 contracts (different regulatory
+  schema). No personal data collection or scraping — the official
+  consolidated file only.
+- **Semantic search only covers the last 60 days** of notified markets
+  (~20k of the ~780k in the full ingested corpus), a deliberate CPU-time
+  trade-off — see "Indexed corpus scope". Structured filters (montant,
+  département, date, type, CPV) still reach the full corpus.
+- **On purely descriptive questions, semantic-only search currently beats
+  hybrid** (0.46 vs. 0.38 recall@10 — see "Evaluation results"): fusing in
+  BM25 can dilute a strong semantic signal when a question deliberately
+  avoids the market's own vocabulary. Not fixed, reported as-is.
+- **Some source `objet` text is visibly mis-encoded** (mojibake, e.g.
+  doubled accented characters) in the upstream DECP file itself — the
+  pipeline reads it as-is from the producer, no re-encoding is attempted.
+- **Local Ollama generation is slow on CPU** (tens of seconds per answer
+  on this project's dev machine) — a hosted free-tier provider (e.g.
+  Groq) via `OPENAI_API_KEY` is markedly faster in practice; either path
+  is unavailable-safe (falls back to degraded, see "API and generation").
+- **Département extraction is name-based, not city-based**: "à Marseille"
+  won't resolve to Bouches-du-Rhône, only "dans les Bouches-du-Rhône"
+  will — a known gap in `extract_filters`, not silently miscategorized.
 
 ## Licence
 
