@@ -173,24 +173,23 @@ empty `.env`, `/answer` returns the matching markets and their statistics
 configure. This is exactly what a recruiter cloning the repo without
 touching `.env` will see.
 
-When a generator *is* available (see below), `/answer` instead returns a
-drafted answer — but only if it cites at least one market's `uid`.
-`decp.answer.generate.generate_answer` builds the prompt (which explicitly
-demands `[uid: ...]` citations for every figure), calls the model, and
-raises `UncitedAnswerError` if no known `uid` appears in the response; the
-API catches that and **falls back to the degraded answer** rather than
-show an answer with unverifiable figures (SPEC.md section 7). This is
-checked directly: `tests/test_generate.py` feeds a fake generator an
-uncited response and asserts the error is raised, and
-`tests/test_app.py::test_answer_endpoint_falls_back_to_degraded_when_uncited`
-checks the same thing through the actual HTTP endpoint.
+When a generator *is* available (see below), `/answer` returns a drafted
+answer only after validation. The prompt treats the question and market
+descriptions as data, requires an exact `[uid: ...]` citation in each
+sentence with a monetary amount, and prohibits model-computed aggregates.
+Validation rejects missing or unknown citations and any cited amount that
+does not equal a retrieved market's amount. Rejected prose is replaced by
+the deterministic market list and statistics. This is a conservative
+guardrail: non-monetary claims still require human review against the
+displayed source rows.
 
 Generation resolution, in order (`decp.answer.generate.load_generator`):
 1. an `OPENAI_API_KEY` — sent to `OPENAI_BASE_URL` (default `api.openai.com`,
    but any OpenAI-compatible chat completions endpoint works, e.g. Groq's
    free tier — see `.env.example`);
-2. otherwise, a locally reachable Ollama server (`OLLAMA_BASE_URL`, default
-   `localhost:11434`) — free, no key, but needs Ollama installed and running;
+2. a locally reachable Ollama server (`OLLAMA_BASE_URL`, default
+   `localhost:11434`) — used without a cloud key or if the cloud request
+   fails; free, no key, but needs Ollama installed and running;
 3. otherwise, the degraded mode above.
 
 **Explicit verification, with a genuinely empty `.env`** (2026-09-05), against

@@ -2,7 +2,9 @@ from datetime import date
 
 import pytest
 
+import decp.answer.generate as generation
 from decp.answer.generate import UncitedAnswerError, extract_cited_uids, generate_answer
+from decp.config import load_settings
 from decp.retrieval.search import SearchResult
 
 
@@ -24,6 +26,7 @@ def test_extract_cited_uids_finds_present_ones_in_order():
 
 def test_extract_cited_uids_empty_when_none_present():
     assert extract_cited_uids("réponse générique", ["U1", "U2"]) == []
+    assert extract_cited_uids("U1 apparaît sans balise", ["U1"]) == []
 
 
 def test_generate_answer_accepts_response_with_citation():
@@ -66,3 +69,33 @@ def test_generate_answer_with_no_results_always_rejects():
 
     with pytest.raises(UncitedAnswerError):
         generate_answer("question", [], fake_generator)
+
+
+def test_generate_answer_rejects_unknown_citation_even_with_a_valid_one():
+    with pytest.raises(UncitedAnswerError):
+        generate_answer("question", [_result("U1")],
+                        lambda prompt: "Voir [uid: U1] et [uid: U999].")
+
+
+def test_generate_answer_rejects_unsupported_amount():
+    with pytest.raises(UncitedAnswerError):
+        generate_answer("question", [_result("U1", 100.0)],
+                        lambda prompt: "Le marché coûte 900 euros [uid: U1].")
+
+
+def test_generate_answer_rejects_amount_without_citation_in_same_sentence():
+    with pytest.raises(UncitedAnswerError):
+        generate_answer("question", [_result("U1", 100.0)],
+                        lambda prompt: "Voir [uid: U1]. Il coûte 100 euros.")
+
+
+def test_cloud_failure_uses_available_local_generator(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setattr(generation, "_ollama_available", lambda base_url: True)
+    monkeypatch.setattr(generation, "_openai_generator",
+                        lambda *args: lambda prompt: (_ for _ in ()).throw(OSError("offline")))
+    monkeypatch.setattr(generation, "_ollama_generator",
+                        lambda *args: lambda prompt: "local answer")
+    generator = generation.load_generator(load_settings())
+    assert generator is not None
+    assert generator("prompt") == "local answer"

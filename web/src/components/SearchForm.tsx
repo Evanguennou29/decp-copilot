@@ -15,42 +15,42 @@ export function SearchForm({ value, onChange, onSubmit, examples, disabled }: Se
   }
 
   return (
-    <div>
-      <form onSubmit={handleSubmit} className="flex flex-col gap-2 sm:flex-row sm:items-end">
+    <div className="search-content">
+      <form onSubmit={handleSubmit} className="flex flex-col gap-4 sm:flex-row sm:items-end">
         <div className="flex-1">
-          <label htmlFor="question" className="block text-xs font-medium text-ink-muted">
-            Question sur les marchés publics
+          <label htmlFor="question" className="block text-xs font-semibold uppercase tracking-widest text-ink-muted">
+            Que souhaitez-vous explorer ?
           </label>
           <input
             id="question"
             name="question"
             type="text"
             autoComplete="off"
+            maxLength={500}
             value={value}
             onChange={(event) => onChange(event.target.value)}
-            placeholder="ex. moins de 50 000 euros dans le Finistère"
+            placeholder="Ex. Marchés de nettoyage dans le Finistère..."
             aria-describedby="question-hint"
-            className="mt-1 w-full border-0 border-b-2 border-ink-border bg-transparent px-0 py-2
-              font-display text-lg text-ink placeholder:text-ink-faint focus:border-accent
-              focus:outline-none"
+            className="search-input mt-3 w-full rounded-xl border border-ink-border bg-paper-raised px-4 py-4
+              font-display text-base text-ink placeholder:text-ink-faint focus:border-accent
+              focus:outline-none sm:text-lg"
           />
-          <p id="question-hint" className="mt-1 text-xs font-light text-ink-faint">
-            Montant, département, type de marché, date, ou description libre — vous pouvez
-            combiner.
+          <p id="question-hint" className="mt-2 text-xs text-ink-muted">
+            Combinez librement montant, département, type de marché et période.
           </p>
         </div>
         <button
           type="submit"
           disabled={disabled}
-          className="shrink-0 border-2 border-ink px-5 py-2 font-display text-sm font-bold
-            uppercase tracking-wide text-ink transition-colors hover:bg-ink hover:text-paper
-            disabled:cursor-wait disabled:opacity-50"
+          className="search-button shrink-0 rounded-xl px-6 py-4 font-display text-sm font-bold
+            text-paper transition-colors disabled:cursor-wait disabled:opacity-50"
         >
-          Chercher
+          Explorer <span aria-hidden="true">↗</span>
         </button>
       </form>
 
-      <ul className="mt-3 flex flex-wrap gap-2" aria-label="Exemples de questions">
+      <ul className="mt-7 flex flex-wrap items-center gap-2" aria-label="Exemples de questions">
+        <li className="mr-1 text-xs font-medium text-ink-muted">Suggestions</li>
         {examples.map((example) => (
           <li key={example}>
             <button
@@ -59,8 +59,8 @@ export function SearchForm({ value, onChange, onSubmit, examples, disabled }: Se
                 onChange(example);
                 onSubmit(example);
               }}
-              className="border border-ink-border px-2.5 py-1 text-xs font-light text-ink-muted
-                transition-colors hover:border-accent hover:text-accent"
+              className="suggestion rounded-full border border-ink-border px-3 py-1.5 text-xs
+                text-ink-muted transition-colors hover:border-accent hover:text-accent"
             >
               {example}
             </button>

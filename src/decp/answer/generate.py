@@ -17,6 +17,8 @@ the pure orchestration/validation logic, exercised in tests with a fake
 from __future__ import annotations
 
 import json
+import logging
+import re
 import urllib.request
 from collections.abc import Callable, Sequence
 
@@ -25,10 +27,53 @@ from decp.config import Settings
 from decp.retrieval.search import SearchResult
 
 Generator = Callable[[str], str]
+logger = logging.getLogger(__name__)
 
 
 class UncitedAnswerError(Exception):
-    """Raised when a generated answer cites no known market identifier."""
+    """Raised when a generated answer cannot be verified against retrieved markets."""
+
+
+_CITATION_RE = re.compile(r"\[uid:\s*([^\]]+?)\s*\]", re.IGNORECASE)
+_MONEY_RE = re.compile(
+    r"(?<![\w])((?:\d{1,3}(?:[\s\u202f.,]\d{3})+|\d+)(?:[,.]\d{1,2})?)\s*(?:€|euros?\b)",
+    re.IGNORECASE,
+)
+
+
+def _money_value(raw: str) -> float:
+    value = raw.replace(" ", "").replace("\u202f", "")
+    if "," in value and "." in value:
+        value = value.replace(".", "").replace(",", ".")
+    elif "," in value:
+        value = (
+            value.replace(",", ".")
+            if len(value.split(",")[-1]) <= 2
+            else value.replace(",", "")
+        )
+    elif "." in value and len(value.split(".")[-1]) == 3:
+        value = value.replace(".", "")
+    return float(value)
+
+
+def validate_answer(answer: str, results: Sequence[SearchResult]) -> None:
+    """Reject unknown citations and unsupported monetary claims.
+
+    Each monetary sentence must cite a retrieved market with that exact amount.
+    Aggregate figures are deliberately left to the deterministic stats panel.
+    """
+    known = {result.uid: result for result in results}
+    citations = _CITATION_RE.findall(answer)
+    if not citations or any(uid not in known for uid in citations):
+        raise UncitedAnswerError("Answer has missing or unknown market citations")
+    for sentence in re.split(r"(?<=[.!?])\s+|\n+", answer):
+        amounts = [_money_value(match) for match in _MONEY_RE.findall(sentence)]
+        if not amounts:
+            continue
+        cited = [_money_value(str(known[uid].montant)) for uid in _CITATION_RE.findall(sentence)
+                 if uid in known and known[uid].montant is not None]
+        if any(not any(abs(amount - value) < 0.01 for value in cited) for amount in amounts):
+            raise UncitedAnswerError("Answer contains an unsupported monetary amount")
 
 
 def _openai_generator(base_url: str, api_key: str, model: str) -> Generator:
@@ -81,20 +126,34 @@ def _ollama_generator(base_url: str, model: str) -> Generator:
 
 
 def load_generator(settings: Settings) -> Generator | None:
-    """Resolve a real generator: cloud key, then a reachable local Ollama,
-    else ``None`` (degraded mode). Never called in tests."""
+    """Resolve cloud generation with a local Ollama fallback when available."""
+    local = (
+        _ollama_generator(settings.ollama_base_url, settings.ollama_model)
+        if _ollama_available(settings.ollama_base_url)
+        else None
+    )
     if settings.has_llm_key:
-        return _openai_generator(
+        cloud = _openai_generator(
             settings.openai_base_url, settings.openai_api_key, settings.openai_model
         )
-    if _ollama_available(settings.ollama_base_url):
-        return _ollama_generator(settings.ollama_base_url, settings.ollama_model)
-    return None
+        if local is None:
+            return cloud
+
+        def generate(prompt: str) -> str:
+            try:
+                return cloud(prompt)
+            except (OSError, ValueError, KeyError, IndexError, TypeError):
+                logger.warning("Cloud generation failed; retrying with Ollama", exc_info=True)
+                return local(prompt)
+
+        return generate
+    return local
 
 
 def extract_cited_uids(text: str, valid_uids: Sequence[str]) -> list[str]:
-    """Which of ``valid_uids`` are literally present in ``text``, in ``valid_uids`` order."""
-    return [uid for uid in valid_uids if uid in text]
+    """Return only exact citation markers, in source order."""
+    cited = set(_CITATION_RE.findall(text))
+    return [uid for uid in valid_uids if uid in cited]
 
 
 def generate_answer(question: str, results: Sequence[SearchResult], generator: Generator) -> str:
@@ -107,7 +166,5 @@ def generate_answer(question: str, results: Sequence[SearchResult], generator: G
     """
     prompt = build_prompt(question, results)
     answer = generator(prompt)
-    valid_uids = [r.uid for r in results]
-    if not extract_cited_uids(answer, valid_uids):
-        raise UncitedAnswerError("Generated answer cites no known market identifier")
+    validate_answer(answer, results)
     return answer

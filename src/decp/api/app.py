@@ -103,7 +103,10 @@ def create_app(deps: Dependencies) -> FastAPI:
         return {"status": "ok", "generation_available": deps.generator is not None}
 
     @app.get("/search")
-    def search_endpoint(q: str = Query(..., min_length=1), top_k: int = 10) -> dict:
+    def search_endpoint(
+        q: str = Query(..., min_length=1, max_length=500),
+        top_k: int = Query(10, ge=1, le=50),
+    ) -> dict:
         results = search(
             q,
             database_path=deps.database_path,
@@ -114,7 +117,10 @@ def create_app(deps: Dependencies) -> FastAPI:
         return {"results": [_market_dict(r) for r in results], "filters": _filters_dict(q)}
 
     @app.get("/answer")
-    def answer_endpoint(q: str = Query(..., min_length=1), top_k: int = 10) -> dict:
+    def answer_endpoint(
+        q: str = Query(..., min_length=1, max_length=500),
+        top_k: int = Query(10, ge=1, le=50),
+    ) -> dict:
         results = search(
             q,
             database_path=deps.database_path,
@@ -128,7 +134,7 @@ def create_app(deps: Dependencies) -> FastAPI:
         stats = asdict(degraded.stats)
         filters = _filters_dict(q)
 
-        if deps.generator is not None:
+        if deps.generator is not None and results:
             try:
                 answer_text = generate_answer(q, results, deps.generator)
                 return {
