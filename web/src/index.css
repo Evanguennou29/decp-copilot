@@ -38,8 +38,6 @@ body {
 .brand-mark span:nth-child(1) { height: 8px; }.brand-mark span:nth-child(2) { height: 14px; }.brand-mark span:nth-child(3) { height: 19px; background: #e99b70; }
 .header-link { padding: 8px 12px; border: 1px solid var(--color-ink-border); border-radius: 100px; transition: background .2s, transform .2s; }
 .header-link:hover { background: white; transform: translateY(-2px); }
-.eyebrow { display: flex; align-items: center; gap: 9px; color: var(--color-accent); font-size: 11px; font-weight: 700; letter-spacing: .14em; }
-.status-dot { width: 7px; height: 7px; border-radius: 50%; background: #2caf81; box-shadow: 0 0 0 5px #daf2e5; }
 .hero-title { font-size: clamp(2.7rem, 5.8vw, 5.3rem); line-height: 1.07; }
 .hero-title em { color: var(--color-accent); font-style: normal; }
 .hero-orbit { position: absolute; z-index: 0; width: 280px; height: 280px; right: 5%; top: 12%; border: 1px solid rgba(23,109,86,.18); border-radius: 50%; animation: orbit 28s linear infinite; }

@@ -63,13 +63,11 @@ export default function App() {
             <span className="brand-mark" aria-hidden="true"><span /><span /><span /></span>
             <span className="font-display text-sm font-bold tracking-tight sm:text-base">decp<span className="text-money">/</span>copilot</span>
           </a>
-          <span className="hidden text-xs text-ink-muted sm:block">L'intelligence des marchés publics</span>
           <a className="header-link text-xs font-medium" href="https://github.com/Evanguennou29/decp-copilot" target="_blank" rel="noreferrer">Voir le projet <span aria-hidden="true">↗</span></a>
         </header>
         <main id="accueil">
           <section className="hero relative pt-16 pb-10 sm:pt-24 sm:pb-14" aria-labelledby="hero-title">
             <div className="hero-orbit" aria-hidden="true"><span /><span /><span /></div>
-            <p className="eyebrow mb-5"><span className="status-dot" /> DONNÉES PUBLIQUES · FRANCE</p>
             <h1 id="hero-title" className="hero-title max-w-4xl font-display font-semibold tracking-tight">
               Des marchés comparables.<br /><em>Des décisions éclairées.</em>
             </h1>
@@ -78,12 +76,12 @@ export default function App() {
             </p>
           </section>
           <section className="search-panel relative z-10" aria-label="Recherche de marchés">
-            <div className="panel-topline flex items-center justify-between gap-3"><span>RECHERCHE ASSISTÉE</span><span>01 / EXPLORER</span></div>
+            <div className="panel-topline">RECHERCHE ASSISTÉE</div>
             <SearchForm value={question} onChange={setQuestion} onSubmit={runSearch} examples={EXAMPLES} disabled={status === "loading"} />
           </section>
           <section className="results-section mt-10 sm:mt-14" aria-label="Résultats" aria-live="polite" aria-busy={status === "loading"}>
             <div className="section-heading mb-5 flex items-end justify-between gap-4">
-              <div><p className="eyebrow mb-2">ANALYSE / 02</p><h2 className="font-display text-2xl font-semibold tracking-tight sm:text-3xl">Explorer les résultats</h2></div>
+              <h2 className="font-display text-2xl font-semibold tracking-tight sm:text-3xl">Explorer les résultats</h2>
               {status === "success" && result && <span className="result-count tabular-figures">{result.markets.length} marché{result.markets.length > 1 ? "s" : ""}</span>}
             </div>
             {status === "idle" && <div className="idle-state rounded-2xl p-8 sm:p-10">
